@@ -20,7 +20,7 @@ use niri_ipc::{HSyncPolarity, VSyncPolarity};
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::format::FormatSet;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
-use smithay::backend::allocator::{Format, Fourcc};
+use smithay::backend::allocator::Fourcc;
 use smithay::backend::drm::compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement};
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::{
@@ -872,7 +872,13 @@ impl Tty {
         } else {
             bail!("no allocator available for device");
         };
-        let gbm_flags = GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT;
+        let mut gbm_flags = GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT;
+        // Display-only devices (e.g. DisplayLink) require linear buffers. Without
+        // this flag, Modifier::Invalid lets the GPU driver pick a tiled layout
+        // (e.g. micro/macro-tiled on AMD Polaris) that the adapter cannot scan out.
+        if render_node.is_none() {
+            gbm_flags |= GbmBufferFlags::LINEAR;
+        }
         let allocator = GbmAllocator::new(allocator_gbm, gbm_flags);
 
         let token = niri
@@ -1364,7 +1370,7 @@ impl Tty {
         // would still be a bad idea to remove this until Smithay has some kind of full-device
         // modesetting test that is able to "downgrade" existing connector modifiers to get enough
         // bandwidth for a newly connected one.
-        let mut render_formats = render_formats
+        let render_formats = render_formats
             .iter()
             .copied()
             .filter(|format| {
@@ -1394,23 +1400,7 @@ impl Tty {
             })
             .collect::<FormatSet>();
 
-        // For display-only devices, replace Modifier::Invalid with Modifier::Linear.
-        // Invalid lets the GPU driver pick any layout (e.g. tiled on AMD Polaris),
-        // but display-only adapters (e.g. DisplayLink) require linear scanout.
         if device.render_node.is_none() {
-            render_formats = render_formats
-                .into_iter()
-                .map(|f| {
-                    if f.modifier == Modifier::Invalid {
-                        Format {
-                            code: f.code,
-                            modifier: Modifier::Linear,
-                        }
-                    } else {
-                        f
-                    }
-                })
-                .collect::<FormatSet>();
             debug!(
                 "display-only device format modifiers: {:?}",
                 render_formats
