@@ -1394,28 +1394,23 @@ impl Tty {
             })
             .collect::<FormatSet>();
 
-        // For display-only devices, ensure Linear is available for each format code.
-        // Modifier::Invalid may result in the GPU allocating tiled buffers that
-        // display-only adapters (e.g. DisplayLink) cannot scan out correctly.
+        // For display-only devices, replace Modifier::Invalid with Modifier::Linear.
+        // Invalid lets the GPU driver pick any layout (e.g. tiled on AMD Polaris),
+        // but display-only adapters (e.g. DisplayLink) require linear scanout.
         if device.render_node.is_none() {
-            let mut extra = Vec::new();
-            for format in render_formats.iter() {
-                if format.modifier == Modifier::Invalid {
-                    let linear = Format {
-                        code: format.code,
-                        modifier: Modifier::Linear,
-                    };
-                    if !render_formats.contains(&linear) {
-                        extra.push(linear);
+            render_formats = render_formats
+                .into_iter()
+                .map(|f| {
+                    if f.modifier == Modifier::Invalid {
+                        Format {
+                            code: f.code,
+                            modifier: Modifier::Linear,
+                        }
+                    } else {
+                        f
                     }
-                }
-            }
-            if !extra.is_empty() {
-                render_formats = render_formats
-                    .into_iter()
-                    .chain(extra)
-                    .collect::<FormatSet>();
-            }
+                })
+                .collect::<FormatSet>();
             debug!(
                 "display-only device format modifiers: {:?}",
                 render_formats
