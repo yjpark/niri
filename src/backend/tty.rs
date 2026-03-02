@@ -1356,7 +1356,9 @@ impl Tty {
         // Filter out the CCS modifiers as they have increased bandwidth, causing some monitor
         // configurations to stop working.
         //
-        // For display only devices, restrict to linear buffers for best compatibility.
+        // For display only devices, restrict to linear/invalid buffers for best compatibility.
+        // Some GPUs (e.g. AMD Polaris) only report Modifier::Invalid (implicit) rather than
+        // Modifier::Linear, so we must accept both for display-only devices.
         //
         // The invalid modifier attempt below should make this unnecessary in some cases, but it
         // would still be a bad idea to remove this until Smithay has some kind of full-device
@@ -1367,7 +1369,8 @@ impl Tty {
             .copied()
             .filter(|format| {
                 if device.render_node.is_none() {
-                    return format.modifier == Modifier::Linear;
+                    return format.modifier == Modifier::Linear
+                        || format.modifier == Modifier::Invalid;
                 }
 
                 let is_ccs = matches!(
