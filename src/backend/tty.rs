@@ -20,7 +20,7 @@ use niri_ipc::{HSyncPolarity, VSyncPolarity};
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::format::FormatSet;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
-use smithay::backend::allocator::Fourcc;
+use smithay::backend::allocator::{Format, Fourcc};
 use smithay::backend::drm::compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement};
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::{
@@ -1364,7 +1364,7 @@ impl Tty {
         // would still be a bad idea to remove this until Smithay has some kind of full-device
         // modesetting test that is able to "downgrade" existing connector modifiers to get enough
         // bandwidth for a newly connected one.
-        let render_formats = render_formats
+        let mut render_formats = render_formats
             .iter()
             .copied()
             .filter(|format| {
@@ -1393,6 +1393,37 @@ impl Tty {
                 !is_ccs
             })
             .collect::<FormatSet>();
+
+        // For display-only devices, ensure Linear is available for each format code.
+        // Modifier::Invalid may result in the GPU allocating tiled buffers that
+        // display-only adapters (e.g. DisplayLink) cannot scan out correctly.
+        if device.render_node.is_none() {
+            let mut extra = Vec::new();
+            for format in render_formats.iter() {
+                if format.modifier == Modifier::Invalid {
+                    let linear = Format {
+                        code: format.code,
+                        modifier: Modifier::Linear,
+                    };
+                    if !render_formats.contains(&linear) {
+                        extra.push(linear);
+                    }
+                }
+            }
+            if !extra.is_empty() {
+                render_formats = render_formats
+                    .into_iter()
+                    .chain(extra)
+                    .collect::<FormatSet>();
+            }
+            debug!(
+                "display-only device format modifiers: {:?}",
+                render_formats
+                    .iter()
+                    .map(|f| f.modifier)
+                    .collect::<Vec<_>>()
+            );
+        }
 
         // Create the compositor.
         let res = DrmCompositor::new(
@@ -2764,8 +2795,10 @@ fn surface_dmabuf_feedback(
     // Also limit scan-out formats to Linear if we have a device without a render node (i.e.
     // we're rendering on a different device).
     if surface_render_node != Some(primary_render_node) {
-        primary_scanout_formats.retain(|f| f.modifier == Modifier::Linear);
-        primary_or_overlay_scanout_formats.retain(|f| f.modifier == Modifier::Linear);
+        primary_scanout_formats
+            .retain(|f| f.modifier == Modifier::Linear || f.modifier == Modifier::Invalid);
+        primary_or_overlay_scanout_formats
+            .retain(|f| f.modifier == Modifier::Linear || f.modifier == Modifier::Invalid);
     }
 
     let builder = DmabufFeedbackBuilder::new(primary_render_node.dev_id(), primary_formats);
